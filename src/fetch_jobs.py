@@ -1,7 +1,8 @@
 import json
-import re
 from datetime import datetime
 from pathlib import Path
+import smtplib
+from email.message import EmailMessage
 
 import requests
 from bs4 import BeautifulSoup
@@ -19,11 +20,7 @@ SOURCES = [
 ]
 
 # Adjust keywords to your interests
-KEYWORDS = [
-    "IT", "ICT", "Network", "Systems", "System", "Administrator", "Sysadmin",
-    "Cloud", "Security", "Cyber", "Firewall", "Support", "Engineer",
-    "Data", "Analyst", "Developer", "Software", "Project", "M&E", "Monitoring"
-]
+KEYWORDS = ["Manager", "Officer", "Assistant", "Project"]
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
@@ -65,6 +62,65 @@ def save_seen(seen: set[str]) -> None:
     SEEN_FILE.write_text(json.dumps(sorted(seen), indent=2), encoding="utf-8")
 
 
+def load_env(path: Path) -> dict:
+    """
+    Minimal .env reader (no extra packages needed).
+    Expected lines like: KEY=value
+    """
+    env = {}
+    if not path.exists():
+        return env
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        env[k.strip()] = v.strip()
+    return env
+
+
+def send_email(subject: str, body_text: str, attachment_path: Path) -> None:
+    """
+    Sends an email via Gmail SMTP using an App Password.
+    Requires a .env file in the project root with:
+      SENDER_EMAIL=...
+      SENDER_APP_PASSWORD=... (16-char app password, no spaces)
+      RECIPIENT_EMAIL=...
+    """
+    env = load_env(ROOT / ".env")
+
+    sender = env.get("SENDER_EMAIL", "")
+    app_pw = env.get("SENDER_APP_PASSWORD", "")
+    recipient = env.get("RECIPIENT_EMAIL", "")
+
+    if not sender or not app_pw or not recipient:
+        log("Email not sent: missing .env values (SENDER_EMAIL / SENDER_APP_PASSWORD / RECIPIENT_EMAIL).")
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = recipient
+    msg.set_content(body_text)
+
+    if attachment_path.exists():
+        msg.add_attachment(
+            attachment_path.read_bytes(),
+            maintype="text",
+            subtype="markdown",
+            filename=attachment_path.name
+        )
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(sender, app_pw)
+            smtp.send_message(msg)
+        log(f"Email sent to {recipient}")
+    except Exception as e:
+        log(f"Email send FAILED: {e}")
+
+
 def parse_ntchito(html: str) -> list[dict]:
     soup = BeautifulSoup(html, "lxml")
     jobs = []
@@ -92,9 +148,7 @@ def parse_ntchito(html: str) -> list[dict]:
             })
 
     # Deduplicate by id
-    uniq = {}
-    for j in jobs:
-        uniq[j["id"]] = j
+    uniq = {j["id"]: j for j in jobs}
     return list(uniq.values())
 
 
@@ -179,6 +233,11 @@ def main():
     save_seen(seen)
 
     write_digest(new_jobs)
+
+    # Send email (always)
+    subject = f"Malawi Job Digest — {datetime.now().strftime('%Y-%m-%d')}"
+    body = f"Daily job digest generated.\nNew matching jobs: {len(new_jobs)}\n\nSee attached daily_jobs.md."
+    send_email(subject, body, DIGEST_FILE)
 
     log(f"New items: {len(new_jobs)}")
     log(f"Digest: {DIGEST_FILE}")
