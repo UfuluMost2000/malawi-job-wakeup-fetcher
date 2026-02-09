@@ -1,2 +1,2 @@
 # malawi-job-wakeup-fetcher
-A simple Python tool that fetches new job vacancies from Malawian job websites and generates a daily job digest automatically.
+Built a Python automation that scrapes multiple Malawian job boards, filters roles by keywords, deduplicates results, generates a daily digest, and emails it automatically on a schedule using secure credential handling.
